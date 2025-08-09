@@ -1,0 +1,29 @@
+# Research File Manager MVP - Python Dependencies
+
+# Core FastAPI and server
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+python-multipart==0.0.6
+
+# Database
+sqlalchemy==2.0.23
+pydantic==2.5.0
+
+# File monitoring
+watchdog==3.0.0
+aiofiles==23.2.1
+
+# Machine Learning and AI
+sentence-transformers==2.2.2
+# ChromaDB - Try installing with: pip install chromadb --no-build-isolation
+# Or use alternative: pip install chromadb-client
+chromadb==0.4.18
+
+# Environment and configuration
+python-dotenv==1.0.0
+
+# Optional: Extended functionality
+# PyPDF2==3.0.1
+# python-docx==1.1.0
+# easyocr==1.7.1
+# ollama==0.1.7
