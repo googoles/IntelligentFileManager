@@ -1,35 +1,35 @@
-# Research File Manager MVP - Python Dependencies
+# Research File Manager MVP - Core Dependencies (No Rust compilation)
+# For Windows users having Rust errors, this avoids ChromaDB compilation
 
-# Core FastAPI and server
+# Core web framework
 fastapi==0.104.1
-uvicorn[standard]==0.24.0
+uvicorn==0.24.0
 python-multipart==0.0.6
 
-# Database
+# Database and ORM
 sqlalchemy==2.0.23
 pydantic==2.5.0
 
-# File monitoring
+# File system monitoring
 watchdog==3.0.0
 aiofiles==23.2.1
 
-# Machine Learning and AI
-sentence-transformers==2.2.2
-# ChromaDB - Try installing with: pip install chromadb --no-build-isolation
-# Or use alternative: pip install chromadb-client
-chromadb==0.4.18
-
-# Environment and configuration
+# Configuration
 python-dotenv==1.0.0
 
-# Document processing (now enabled)
+# Document processing (pure Python)
 PyPDF2==3.0.1
 python-docx==1.1.0
+Pillow>=9.0.0
 
-# OCR capabilities - Install these for image text extraction
-easyocr==1.7.1
-pdf2image==1.3.2
-Pillow==10.1.0
+# Math and arrays (pre-compiled)
+numpy>=1.21.0
 
-# Optional: LLM functionality
-# ollama==0.1.7
+# AI/ML (pre-compiled wheels, no Rust needed)
+sentence-transformers==2.2.2
+
+# Optional - install manually if needed:
+# torch>=2.0.0 --index-url https://download.pytorch.org/whl/cpu
+# ollama>=0.5.0
+# chromadb>=0.4.18 (requires Rust on Windows)
+# easyocr>=1.7.0 (requires compilation)
