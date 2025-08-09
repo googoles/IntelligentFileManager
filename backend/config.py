@@ -67,6 +67,16 @@ class Config:
     # ChromaDB settings
     CHROMA_DB_PATH: str = os.getenv('CHROMA_DB_PATH', str(DATA_DIR / 'db' / 'chroma'))
     
+    # LLM (Ollama) settings
+    LLM_ENABLED: bool = os.getenv('LLM_ENABLED', 'True').lower() in ('true', '1', 'yes')
+    LLM_MODEL_NAME: str = os.getenv('LLM_MODEL_NAME', 'llama3.2:3b')
+    LLM_TIMEOUT: int = int(os.getenv('LLM_TIMEOUT', 60))  # seconds
+    LLM_MAX_CONTEXT_LENGTH: int = int(os.getenv('LLM_MAX_CONTEXT_LENGTH', 4000))  # characters
+    LLM_TEMPERATURE: float = float(os.getenv('LLM_TEMPERATURE', 0.3))
+    LLM_FALLBACK_ENABLED: bool = os.getenv('LLM_FALLBACK_ENABLED', 'True').lower() in ('true', '1', 'yes')
+    LLM_MAX_RETRIES: int = int(os.getenv('LLM_MAX_RETRIES', 3))
+    LLM_CHUNK_SIZE: int = int(os.getenv('LLM_CHUNK_SIZE', 2000))
+    
     # Project template settings
     DEFAULT_PROJECT_TEMPLATE: str = os.getenv('DEFAULT_PROJECT_TEMPLATE', 'research')
     

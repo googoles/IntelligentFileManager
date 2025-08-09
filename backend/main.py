@@ -28,10 +28,22 @@ try:
     from database import (
         init_database, db_session, create_project, create_file,
         Project, File, get_all_projects, get_project_files,
-        get_project_by_id
+        get_project_by_id, delete_project
     )
     from file_watcher import FileWatcherManager
     from organizer import FileOrganizer, create_project_structure
+    from llm_service import LocalLLMService, LLMConfig, get_llm_service
+    from config import config
+    
+    # Import OCR processor
+    try:
+        from ocr_processor import get_ocr_processor, is_ocr_available, get_ocr_capabilities
+        OCR_AVAILABLE = True
+    except ImportError:
+        get_ocr_processor = None
+        is_ocr_available = lambda: False
+        get_ocr_capabilities = lambda: {"ocr_available": False, "error": "OCR not available"}
+        OCR_AVAILABLE = False
     
     # Try to import ChromaDB-based search, fall back to simple search for Windows
     try:
@@ -61,11 +73,12 @@ logger = logging.getLogger(__name__)
 file_watcher_manager = None
 semantic_search = None
 file_organizer = None
+llm_service = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown events"""
-    global file_watcher_manager, semantic_search, file_organizer
+    global file_watcher_manager, semantic_search, file_organizer, llm_service
     
     logger.info("🚀 Starting Research File Manager MVP...")
     
@@ -87,6 +100,20 @@ async def lifespan(app: FastAPI):
         file_watcher_manager = FileWatcherManager()
         semantic_search = SemanticSearch()
         file_organizer = FileOrganizer()
+        
+        # Initialize LLM service with configuration
+        llm_config = LLMConfig()
+        llm_config.enabled = config.LLM_ENABLED
+        llm_config.model_name = config.LLM_MODEL_NAME
+        llm_config.timeout = config.LLM_TIMEOUT
+        llm_config.max_context_length = config.LLM_MAX_CONTEXT_LENGTH
+        llm_config.temperature = config.LLM_TEMPERATURE
+        llm_config.fallback_enabled = config.LLM_FALLBACK_ENABLED
+        llm_config.max_retries = config.LLM_MAX_RETRIES
+        llm_config.chunk_size = config.LLM_CHUNK_SIZE
+        
+        llm_service = LocalLLMService(llm_config)
+        
         logger.info("✅ Core services initialized")
     except Exception as e:
         logger.error(f"❌ Service initialization failed: {e}")
@@ -145,6 +172,13 @@ class OrganizeRequest(BaseModel):
     project_id: str = Field(..., description="Project ID to organize")
     auto_move: Optional[bool] = Field(False, description="Automatically move files")
 
+class OCRExtractRequest(BaseModel):
+    file_path: Optional[str] = Field(None, description="Path to file for OCR processing")
+    max_pages: Optional[int] = Field(20, ge=1, le=50, description="Maximum pages to process for PDFs")
+
+class OCRStatusRequest(BaseModel):
+    file_id: str = Field(..., description="File ID to check OCR status")
+
 class ProjectResponse(BaseModel):
     id: str
     name: str
@@ -164,6 +198,29 @@ class SearchResult(BaseModel):
     file: FileResponse
     snippet: str
     score: float
+    summary: Optional[str] = Field(None, description="AI-generated summary if available")
+    llm_available: bool = Field(default=False, description="Whether LLM features are available for this result")
+
+# LLM-related models
+class SummarizeRequest(BaseModel):
+    file_id: str = Field(..., description="File ID to summarize")
+    content: Optional[str] = Field(None, description="Optional content override")
+
+class QueryRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Question to ask about the file")
+    file_id: str = Field(..., description="File ID to query")
+    content: Optional[str] = Field(None, description="Optional content override")
+
+class OrganizationSuggestionRequest(BaseModel):
+    file_name: str = Field(..., description="Name of the file")
+    content: Optional[str] = Field(None, description="File content for analysis")
+    file_type: Optional[str] = Field(None, description="File extension")
+
+class LLMResponse(BaseModel):
+    success: bool
+    data: Dict[str, Any] = Field(default_factory=dict)
+    error: Optional[str] = None
+    service_available: bool
 
 # Error handlers
 @app.exception_handler(HTTPException)
@@ -295,6 +352,46 @@ async def list_project_files(project_id: str):
         logger.error(f"Failed to list files: {e}")
         raise HTTPException(status_code=500, detail="Failed to retrieve files")
 
+@app.delete("/projects/{project_id}")
+async def delete_project_endpoint(project_id: str):
+    """Delete a project and all its associated files"""
+    try:
+        with db_session() as session:
+            # Check if project exists
+            project = get_project_by_id(session, project_id)
+            if not project:
+                raise HTTPException(status_code=404, detail="Project not found")
+            
+            project_name = project.name
+            
+            # Stop file watcher for this project if it's running
+            if file_watcher_manager:
+                try:
+                    file_watcher_manager.stop_watching_project(project_id)
+                    logger.info(f"Stopped file watcher for project: {project_name}")
+                except Exception as e:
+                    logger.warning(f"Failed to stop file watcher for project {project_name}: {e}")
+            
+            # Delete the project from database (files will cascade delete due to foreign key)
+            success = delete_project(session, project_id)
+            
+            if not success:
+                # This shouldn't happen since we checked existence above, but handle it
+                raise HTTPException(status_code=404, detail="Project not found")
+            
+            logger.info(f"Successfully deleted project: {project_name} ({project_id})")
+            
+            return {
+                "message": f"Project '{project_name}' deleted successfully",
+                "project_id": project_id
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete project {project_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete project: {str(e)}")
+
 @app.post("/search", response_model=List[SearchResult])
 async def search_files(query: SearchQuery):
     """Perform semantic search across files"""
@@ -309,12 +406,37 @@ async def search_files(query: SearchQuery):
             top_k=query.top_k
         )
         
-        # Format results
+        # Format results with optional LLM enhancements
         formatted_results = []
         with db_session() as session:
             for result in results:
                 file_record = session.query(File).filter(File.id == result.file_id).first()
                 if file_record:
+                    # Check if we should generate a summary for this result
+                    summary = None
+                    llm_available = llm_service and llm_service.is_available
+                    
+                    # Generate quick summary for top results if LLM is available
+                    if (llm_available and 
+                        result.similarity > 0.7 and  # Only for high-relevance results
+                        file_record.content and 
+                        len(file_record.content.strip()) > 100):  # Only for substantial content
+                        
+                        try:
+                            # Quick summary with shorter context
+                            summary_result = await llm_service.summarize_content(
+                                result.content[:1000],  # Use search result content, truncated
+                                {
+                                    'file_name': file_record.name,
+                                    'file_type': file_record.type
+                                }
+                            )
+                            if summary_result.get('summary'):
+                                summary = summary_result['summary']
+                        except Exception as e:
+                            logger.debug(f"Quick summary generation failed for file {file_record.id}: {e}")
+                            # Don't fail the search if summary fails
+                    
                     formatted_results.append(SearchResult(
                         file=FileResponse(
                             id=file_record.id,
@@ -325,7 +447,9 @@ async def search_files(query: SearchQuery):
                             created_at=file_record.created_at.isoformat()
                         ),
                         snippet=result.content[:200] + "..." if len(result.content) > 200 else result.content,
-                        score=result.similarity
+                        score=result.similarity,
+                        summary=summary,
+                        llm_available=llm_available
                     ))
         
         return formatted_results
@@ -406,6 +530,365 @@ async def upload_file(project_id: str, file: UploadFile = FastFile(...)):
         logger.error(f"Upload failed: {e}")
         raise HTTPException(status_code=500, detail="File upload failed")
 
+# LLM endpoints
+@app.post("/api/llm/summarize", response_model=LLMResponse)
+async def summarize_file(request: SummarizeRequest):
+    """Summarize file content using local LLM"""
+    try:
+        if not llm_service:
+            return LLMResponse(
+                success=False,
+                error="LLM service not available",
+                service_available=False
+            )
+        
+        # Get file content if not provided
+        content = request.content
+        if not content:
+            with db_session() as session:
+                file_record = session.query(File).filter(File.id == request.file_id).first()
+                if not file_record:
+                    raise HTTPException(status_code=404, detail="File not found")
+                content = file_record.content or ""
+        
+        if not content.strip():
+            return LLMResponse(
+                success=False,
+                error="No content available to summarize",
+                service_available=llm_service.is_available
+            )
+        
+        # Get file context
+        with db_session() as session:
+            file_record = session.query(File).filter(File.id == request.file_id).first()
+            context = {}
+            if file_record:
+                context = {
+                    'file_name': file_record.name,
+                    'file_type': file_record.type,
+                    'project_id': file_record.project_id
+                }
+        
+        # Generate summary
+        summary_result = await llm_service.summarize_content(content, context)
+        
+        return LLMResponse(
+            success=True,
+            data=summary_result,
+            service_available=llm_service.is_available
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Summarization failed: {e}")
+        return LLMResponse(
+            success=False,
+            error=str(e),
+            service_available=llm_service.is_available if llm_service else False
+        )
+
+@app.post("/api/llm/query", response_model=LLMResponse)
+async def query_file(request: QueryRequest):
+    """Ask questions about file content using local LLM"""
+    try:
+        if not llm_service:
+            return LLMResponse(
+                success=False,
+                error="LLM service not available",
+                service_available=False
+            )
+        
+        # Get file content if not provided
+        content = request.content
+        if not content:
+            with db_session() as session:
+                file_record = session.query(File).filter(File.id == request.file_id).first()
+                if not file_record:
+                    raise HTTPException(status_code=404, detail="File not found")
+                content = file_record.content or ""
+        
+        if not content.strip():
+            return LLMResponse(
+                success=False,
+                error="No content available to query",
+                service_available=llm_service.is_available
+            )
+        
+        # Get file context
+        with db_session() as session:
+            file_record = session.query(File).filter(File.id == request.file_id).first()
+            context = {}
+            if file_record:
+                context = {
+                    'file_name': file_record.name,
+                    'file_type': file_record.type
+                }
+        
+        # Generate answer
+        query_result = await llm_service.query_content(request.query, content, context)
+        
+        return LLMResponse(
+            success=True,
+            data=query_result,
+            service_available=llm_service.is_available
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Query failed: {e}")
+        return LLMResponse(
+            success=False,
+            error=str(e),
+            service_available=llm_service.is_available if llm_service else False
+        )
+
+@app.post("/api/llm/suggest-organization", response_model=LLMResponse)
+async def suggest_file_organization(request: OrganizationSuggestionRequest):
+    """Get AI-powered organization suggestions for a file"""
+    try:
+        if not llm_service:
+            return LLMResponse(
+                success=False,
+                error="LLM service not available",
+                service_available=False
+            )
+        
+        # Prepare file info for analysis
+        file_info = {
+            'file_name': request.file_name,
+            'content': request.content or '',
+            'file_type': request.file_type or Path(request.file_name).suffix
+        }
+        
+        # Generate organization suggestion
+        suggestion_result = await llm_service.suggest_organization(file_info)
+        
+        return LLMResponse(
+            success=True,
+            data=suggestion_result,
+            service_available=llm_service.is_available
+        )
+        
+    except Exception as e:
+        logger.error(f"Organization suggestion failed: {e}")
+        return LLMResponse(
+            success=False,
+            error=str(e),
+            service_available=llm_service.is_available if llm_service else False
+        )
+
+@app.get("/api/llm/status", response_model=Dict[str, Any])
+async def get_llm_status():
+    """Get detailed LLM service status"""
+    try:
+        if not llm_service:
+            return {
+                "available": False,
+                "error": "LLM service not initialized",
+                "service_available": False
+            }
+        
+        status = await llm_service.get_service_status()
+        return status
+        
+    except Exception as e:
+        logger.error(f"Failed to get LLM status: {e}")
+        return {
+            "available": False,
+            "error": str(e),
+            "service_available": False
+        }
+
+@app.post("/api/ocr/extract")
+async def extract_ocr(file: UploadFile = FastFile(...), 
+                      max_pages: Optional[int] = None):
+    """Extract text from uploaded image or PDF using OCR"""
+    try:
+        if not OCR_AVAILABLE or not is_ocr_available():
+            raise HTTPException(status_code=503, detail="OCR service not available")
+        
+        # Get OCR processor
+        ocr_processor = get_ocr_processor()
+        if not ocr_processor:
+            raise HTTPException(status_code=503, detail="OCR processor not initialized")
+        
+        # Save uploaded file temporarily
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=Path(file.filename).suffix) as temp_file:
+            content = await file.read()
+            temp_file.write(content)
+            temp_file_path = temp_file.name
+        
+        try:
+            # Check if file can be processed
+            if not ocr_processor.can_process_file(temp_file_path):
+                status = ocr_processor.get_file_ocr_status(temp_file_path)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File cannot be processed: {status.get('reason', 'Unknown reason')}"
+                )
+            
+            # Process with OCR
+            logger.info(f"Processing uploaded file with OCR: {file.filename}")
+            ocr_result = await ocr_processor.extract_text_async(temp_file_path, max_pages)
+            
+            # Convert to response format
+            result = OCRResult(
+                text=ocr_result.text,
+                confidence=ocr_result.confidence,
+                language_detected=ocr_result.language_detected,
+                processing_time=ocr_result.processing_time,
+                word_count=ocr_result.word_count,
+                error=ocr_result.error,
+                metadata=ocr_result.metadata
+            )
+            
+            logger.info(f"OCR completed for {file.filename}: {len(ocr_result.text)} chars extracted")
+            return result
+            
+        finally:
+            # Clean up temporary file
+            try:
+                os.unlink(temp_file_path)
+            except OSError:
+                pass
+                
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"OCR extraction failed for {file.filename}: {e}")
+        raise HTTPException(status_code=500, detail="OCR extraction failed")
+
+@app.get("/api/files/{file_id}/ocr-status")
+async def get_file_ocr_status(file_id: str):
+    """Get OCR processing status for a file"""
+    try:
+        with db_session() as session:
+            file_record = session.query(File).filter(File.id == file_id).first()
+            if not file_record:
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            # Check if OCR is available
+            if not OCR_AVAILABLE or not is_ocr_available():
+                return OCRStatusResponse(
+                    file_id=file_id,
+                    file_path=file_record.path,
+                    can_process=False,
+                    is_processed=False,
+                    reason="OCR service not available"
+                )
+            
+            # Get OCR processor
+            ocr_processor = get_ocr_processor()
+            if not ocr_processor:
+                return OCRStatusResponse(
+                    file_id=file_id,
+                    file_path=file_record.path,
+                    can_process=False,
+                    is_processed=False,
+                    reason="OCR processor not initialized"
+                )
+            
+            # Check processing capability
+            can_process = ocr_processor.can_process_file(file_record.path)
+            status_info = ocr_processor.get_file_ocr_status(file_record.path)
+            
+            # Check if already processed (has OCR metadata)
+            is_processed = False
+            ocr_result_data = None
+            if file_record.metadata and 'ocr_status' in file_record.metadata:
+                is_processed = file_record.metadata.get('ocr_processed', False)
+                # If processed, try to get stored OCR result
+                if is_processed and file_record.content:
+                    # Create a mock OCR result from stored data
+                    ocr_result_data = OCRResult(
+                        text=file_record.content[:500] + "..." if len(file_record.content) > 500 else file_record.content,
+                        confidence=file_record.metadata.get('ocr_confidence', 0.0),
+                        language_detected=file_record.metadata.get('ocr_language', 'unknown'),
+                        processing_time=file_record.metadata.get('ocr_processing_time', 0.0),
+                        word_count=len(file_record.content.split()) if file_record.content else 0
+                    )
+            
+            return OCRStatusResponse(
+                file_id=file_id,
+                file_path=file_record.path,
+                can_process=can_process,
+                is_processed=is_processed,
+                ocr_result=ocr_result_data,
+                estimated_processing_time=status_info.get('estimated_processing_time'),
+                reason=status_info.get('reason') if not can_process else None
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get OCR status for file {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to get OCR status")
+
+@app.post("/api/files/{file_id}/ocr-reprocess")
+async def reprocess_file_ocr(file_id: str, background_tasks: BackgroundTasks,
+                           max_pages: Optional[int] = None):
+    """Reprocess a file with OCR (useful for updating OCR results)"""
+    try:
+        with db_session() as session:
+            file_record = session.query(File).filter(File.id == file_id).first()
+            if not file_record:
+                raise HTTPException(status_code=404, detail="File not found")
+            
+            if not OCR_AVAILABLE or not is_ocr_available():
+                raise HTTPException(status_code=503, detail="OCR service not available")
+            
+            # Check if file exists
+            if not os.path.exists(file_record.path):
+                raise HTTPException(status_code=404, detail="File not found on disk")
+            
+            # Get OCR processor
+            ocr_processor = get_ocr_processor()
+            if not ocr_processor:
+                raise HTTPException(status_code=503, detail="OCR processor not initialized")
+            
+            if not ocr_processor.can_process_file(file_record.path):
+                status_info = ocr_processor.get_file_ocr_status(file_record.path)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"File cannot be processed: {status_info.get('reason', 'Unknown reason')}"
+                )
+            
+            # Schedule background OCR processing
+            background_tasks.add_task(
+                reprocess_file_with_ocr, 
+                file_record.path, 
+                file_id, 
+                max_pages
+            )
+            
+            return {
+                "message": "OCR reprocessing scheduled",
+                "file_id": file_id,
+                "file_path": file_record.path
+            }
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to schedule OCR reprocessing for file {file_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to schedule OCR reprocessing")
+
+@app.get("/api/ocr/capabilities")
+async def get_ocr_capabilities_endpoint():
+    """Get OCR service capabilities and status"""
+    try:
+        capabilities = get_ocr_capabilities()
+        return capabilities
+    except Exception as e:
+        logger.error(f"Failed to get OCR capabilities: {e}")
+        return {
+            "ocr_available": False,
+            "error": str(e)
+        }
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -416,11 +899,77 @@ async def health_check():
             "database": "healthy",
             "file_watcher": "healthy" if file_watcher_manager else "unavailable",
             "semantic_search": "healthy" if semantic_search else "unavailable",
-            "organizer": "healthy" if file_organizer else "unavailable"
+            "organizer": "healthy" if file_organizer else "unavailable",
+            "llm_service": "healthy" if llm_service and llm_service.is_available else "unavailable",
+            "ocr": "healthy" if OCR_AVAILABLE and is_ocr_available() else "unavailable"
         }
     }
 
 # Background tasks
+async def reprocess_file_with_ocr(file_path: str, file_id: str, max_pages: Optional[int] = None):
+    """Background task to reprocess a file with OCR"""
+    try:
+        if not OCR_AVAILABLE or not is_ocr_available():
+            logger.warning(f"OCR not available for reprocessing: {file_path}")
+            return
+        
+        # Get OCR processor
+        ocr_processor = get_ocr_processor()
+        if not ocr_processor:
+            logger.warning(f"OCR processor not available for reprocessing: {file_path}")
+            return
+        
+        # Perform OCR
+        logger.info(f"Starting OCR reprocessing for: {file_path}")
+        ocr_result = await ocr_processor.extract_text_async(file_path, max_pages)
+        
+        if ocr_result.error:
+            logger.error(f"OCR reprocessing failed for {file_path}: {ocr_result.error}")
+            return
+        
+        # Update database with new OCR results
+        with db_session() as session:
+            file_record = session.query(File).filter(File.id == file_id).first()
+            if file_record:
+                # Update content
+                file_record.content = ocr_result.text[:5000]  # Limit content size
+                
+                # Update metadata with OCR results
+                if not file_record.metadata:
+                    file_record.metadata = {}
+                
+                file_record.metadata.update({
+                    'ocr_processed': True,
+                    'ocr_confidence': ocr_result.confidence,
+                    'ocr_language': ocr_result.language_detected,
+                    'ocr_processing_time': ocr_result.processing_time,
+                    'ocr_word_count': ocr_result.word_count,
+                    'ocr_reprocessed_at': datetime.utcnow().isoformat(),
+                    'content_source': 'ocr'
+                })
+                
+                session.commit()
+                
+                # Re-index for search if semantic search is available
+                if semantic_search and ocr_result.text:
+                    try:
+                        await semantic_search.index_file(
+                            file_id,
+                            ocr_result.text,
+                            {'project_id': file_record.project_id, 'file_name': file_record.name}
+                        )
+                        logger.info(f"File re-indexed for search after OCR: {file_path}")
+                    except Exception as e:
+                        logger.warning(f"Failed to re-index file for search after OCR: {e}")
+                
+                logger.info(f"OCR reprocessing completed for {file_path}: "
+                          f"{len(ocr_result.text)} chars extracted, confidence: {ocr_result.confidence:.2f}")
+            else:
+                logger.warning(f"File record not found for OCR update: {file_id}")
+        
+    except Exception as e:
+        logger.error(f"OCR reprocessing failed for {file_path}: {e}")
+
 async def index_existing_files(project_path: str, project_id: str):
     """Background task to index existing files in a project"""
     try:

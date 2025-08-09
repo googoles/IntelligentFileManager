@@ -11,10 +11,11 @@ watchdog>=3.0.0
 aiofiles>=23.2.0
 python-multipart>=0.0.6
 
-# AI/ML for semantic search
+# AI/ML for semantic search and LLM integration
 sentence-transformers>=2.2.0
 chromadb>=0.4.0
 numpy>=1.24.0
+ollama>=0.3.0
 
 # Document processing
 PyPDF2>=3.0.0

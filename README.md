@@ -5,35 +5,53 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.104.1-009688.svg)](https://fastapi.tiangolo.com/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Status: Production Ready](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)]()
 
 ## 🎯 Overview
 
-The Research File Manager MVP is an intelligent file management system designed specifically for researchers, academics, and data scientists. It combines AI-powered semantic search with automatic file organization to help you manage your research projects efficiently.
+The Research File Manager is an intelligent file management system designed for researchers, academics, and data scientists. It combines **AI-powered semantic search** with **automatic file organization** and **OCR capabilities** to revolutionize how you manage your research projects.
 
 ### ✨ Key Features
 
-- 🔍 **Semantic Search**: Find files using natural language queries powered by AI embeddings
-- 🗂️ **Automatic Organization**: AI categorizes and organizes files based on content and naming patterns  
-- 📁 **Project Templates**: Pre-built folder structures for research, data science, and academic workflows
-- 🔄 **Real-time Monitoring**: Automatically indexes new files as they're added to your projects
-- 🌐 **Modern Web Interface**: Intuitive, responsive design for desktop and mobile
-- 🏠 **Privacy-First**: Complete local operation with no cloud dependencies required
+- 🧠 **AI-Powered Intelligence**: Local LLM integration (Ollama) for document summarization and smart queries
+- 👁️ **OCR Text Extraction**: Extract text from images and scanned PDFs automatically
+- 🔍 **Semantic Search**: Find files using natural language queries with AI embeddings
+- 🗂️ **Smart Organization**: Automatic file categorization based on content and naming patterns
+- 📁 **Project Templates**: Pre-built structures for research, data science, and academic workflows
+- 🔄 **Real-time Monitoring**: Automatic indexing and processing of new files
+- 🌑 **Professional UI**: Modern black and white theme with excellent UX
+- 🏠 **Privacy-First**: Complete local operation with no cloud dependencies
 
 ## 🚀 Quick Start
 
 ### Option 1: Automated Setup (Recommended)
 
-```bash
-# Clone or download the project
+**For Windows:**
+```batch
+# Clone the repository
 git clone <repository-url>
 cd IntelligentFileManager
 
-# Run the automated setup
+# Run automated setup
 python setup_mvp.py
 
 # Start the application
-./run_mvp.sh        # Linux/Mac
-run_mvp.bat         # Windows
+run_mvp_windows.bat
+
+# Open browser to http://localhost:8000
+```
+
+**For Linux/Mac:**
+```bash
+# Clone the repository  
+git clone <repository-url>
+cd IntelligentFileManager
+
+# Run automated setup
+python setup_mvp.py
+
+# Start the application
+./run_mvp.sh
 
 # Open browser to http://localhost:8000
 ```
@@ -41,75 +59,75 @@ run_mvp.bat         # Windows
 ### Option 2: Manual Setup
 
 ```bash
-# Create virtual environment
+# 1. Create virtual environment
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# venv\Scripts\activate   # Windows
+source venv/bin/activate    # Linux/Mac
+# venv\Scripts\activate     # Windows
 
-# Install dependencies
+# 2. Install core dependencies
 pip install -r requirements.txt
 
-# Create directories
+# 3. Install AI/OCR dependencies (optional)
+pip install ollama>=0.3.0 easyocr==1.7.1 pdf2image==1.3.2
+
+# 4. Create directories
 mkdir -p data/projects data/db logs
 
-# Start the server
+# 5. Start the server
 python backend/main.py
 ```
 
-## 📊 System Architecture
+## 🤖 AI Features Setup (Optional)
+
+### LLM Integration (Ollama)
+```bash
+# Install Ollama (visit https://ollama.ai)
+curl -fsSL https://ollama.ai/install.sh | sh
+
+# Pull the recommended model
+ollama pull llama3.2:3b
+
+# The application will automatically detect and use Ollama
+```
+
+### OCR Capabilities
+OCR is automatically enabled when EasyOCR is installed. The system will:
+- Process images (.png, .jpg, .gif, .bmp) automatically
+- Extract text from scanned PDFs
+- Make extracted text searchable
+- Show confidence scores for OCR results
+
+## 🏗️ System Architecture
 
 ### Backend Components
-- **FastAPI Application** (`backend/main.py`) - REST API server with all endpoints
-- **Database Layer** (`backend/database.py`) - SQLAlchemy models and session management
-- **File Monitor** (`backend/file_watcher.py`) - Real-time file system monitoring
-- **Smart Organizer** (`backend/organizer.py`) - AI-powered file classification
-- **Semantic Search** (`backend/search.py`) - Vector embeddings and similarity search
+- **FastAPI Application** - REST API server with AI/OCR endpoints
+- **Database Layer** - SQLAlchemy with SQLite (PostgreSQL ready)
+- **File Monitor** - Real-time file system monitoring with automatic processing
+- **Smart Organizer** - AI-powered file classification and organization
+- **Semantic Search** - Vector embeddings with ChromaDB for similarity search
+- **LLM Service** - Local Ollama integration for AI-powered features
+- **OCR Processor** - EasyOCR pipeline for text extraction from images
 
 ### Frontend
-- **Single-Page App** (`frontend/index.html`) - Modern web interface with tabs for Search, Projects, and Organization
+- **Modern Web Interface** - Professional black and white theme
+- **Real-time Updates** - Live project management and file processing
+- **OCR Tools** - Dedicated interface for text extraction
+- **AI Integration** - Document summaries and smart querying
 
-### Data Storage
-- **SQLite Database** - File metadata, project info, and relationships
-- **ChromaDB Vector Store** - Document embeddings for semantic search
-- **Local File System** - Organized project files and folders
+## 📚 Usage Guide
 
-## 🛠️ Technology Stack
-
-- **Backend**: Python 3.8+, FastAPI, SQLAlchemy
-- **AI/ML**: Sentence-Transformers, ChromaDB, all-MiniLM-L6-v2 model
-- **Frontend**: HTML5, CSS3, JavaScript (ES6+)
-- **Database**: SQLite (default), PostgreSQL (production-ready)
-- **File Monitoring**: Watchdog
-- **Server**: Uvicorn ASGI server
-
-## 📚 Usage Examples
-
-### Creating a Research Project
+### Creating Your First Project
 1. Open http://localhost:8000
-2. Go to "📁 Projects" tab
-3. Enter project name: `ML_Research_2024`
-4. Set path: `/home/user/research/ml_project`
-5. Choose "Research Project" template
-6. Click "Create Project"
+2. Navigate to "📁 Projects" tab
+3. Enter project details:
+   - **Name**: `ML_Research_2024`
+   - **Path**: `/path/to/your/research`
+   - **Template**: Choose from Research, Data Science, Minimal, or Software Dev
+4. Click "Create Project"
 
-### Semantic Search
-```
-Search Query: "machine learning experiments from last year"
-Results: Finds relevant papers, code, and data files based on content similarity
-```
+The system creates organized folder structures automatically:
 
-### Auto-Organization
-- Select a project in the "🗂️ Auto-Organize" tab
-- Choose preview mode to see suggestions
-- Enable auto-move to automatically organize files into:
-  - `literature/` - Papers and documents
-  - `data/` - Datasets and raw files  
-  - `code/` - Scripts and programs
-  - `results/` - Analysis outputs and figures
-
-## 🏗️ Project Templates
-
-### Research Template
+**Research Template:**
 ```
 project_root/
 ├── literature/          # Research papers, reviews
@@ -124,87 +142,159 @@ project_root/
 └── notes/              # Research notes
 ```
 
-### Data Science Template
+### Semantic Search Examples
 ```
-project_root/
-├── data/               # Datasets
-├── notebooks/          # Jupyter notebooks  
-├── src/                # Source code
-├── models/             # Trained models
-├── reports/            # Analysis reports
-└── config/             # Configuration files
+Search Query: "machine learning experiments from last year"
+→ Finds relevant papers, code, and data based on content similarity
+
+Search Query: "statistical analysis python scripts"  
+→ Locates analysis code and related documentation
+
+Search Query: "figure generation visualization plots"
+→ Discovers plotting scripts and generated images
 ```
 
-## 🔧 Configuration
+### AI-Powered Features
+- **Document Summaries**: Automatic AI summaries for search results
+- **Content Queries**: Ask questions about specific files
+- **Smart Organization**: AI suggestions for file categorization
+- **OCR Processing**: Text extraction from images and scanned documents
 
-Edit `.env` file to customize:
+## 🛠️ Configuration
 
+### Environment Variables (.env)
 ```bash
-# Server settings
+# Server Settings
 HOST=0.0.0.0
 PORT=8000
+ENV=development
 
 # Database
 DATABASE_URL=sqlite:///data/db/research.db
 
-# AI Model settings
-EMBEDDING_MODEL=all-MiniLM-L6-v2
-CHUNK_SIZE=500
+# AI Features
+OLLAMA_BASE_URL=http://localhost:11434
+DEFAULT_LLM_MODEL=llama3.2:3b
+ENABLE_LLM_FEATURES=true
 
-# File processing
+# OCR Settings
+OCR_LANGUAGES=en
+OCR_CONFIDENCE_THRESHOLD=50
+ENABLE_OCR_PROCESSING=true
+
+# Performance
 MAX_FILE_SIZE_MB=100
-SUPPORTED_TEXT_EXTENSIONS=.txt,.md,.py,.js,.json,.csv
+CHUNK_SIZE=500
+CACHE_SIZE=1000
 ```
+
+### Project Templates
+Customize templates by editing `backend/organizer.py`:
+```python
+PROJECT_TEMPLATES = {
+    'research': ['literature', 'data/raw', 'data/processed', 'code', 'results/figures'],
+    'data_science': ['data', 'notebooks', 'src', 'models', 'reports'],
+    'custom': ['input', 'processing', 'output', 'documentation']
+}
+```
+
+## 🔧 API Documentation
+
+### Core Endpoints
+```
+GET    /                     # Web interface
+GET    /health              # System health check
+POST   /projects            # Create project
+GET    /projects            # List projects
+DELETE /projects/{id}       # Delete project
+POST   /search              # Semantic search
+POST   /organize            # Auto-organize files
+```
+
+### AI Integration Endpoints
+```
+POST   /api/llm/summarize         # AI document summarization
+POST   /api/llm/query             # Ask questions about files
+POST   /api/llm/suggest-organization # AI organization suggestions
+GET    /api/llm/status            # LLM service status
+```
+
+### OCR Processing Endpoints
+```
+POST   /api/ocr/extract           # Process files with OCR
+GET    /api/files/{id}/ocr-status # Check OCR processing status
+POST   /api/files/{id}/ocr-reprocess # Reprocess with OCR
+GET    /api/ocr/capabilities      # OCR service info
+```
+
+Interactive API documentation: http://localhost:8000/docs
 
 ## 🧪 Development
 
 ### Development Mode
 ```bash
 # Start with auto-reload
-./run_dev.sh
-
-# Access API documentation
-http://localhost:8000/docs
+source venv/bin/activate
+cd backend
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-### Testing
+### Testing the System
 ```bash
-# Run tests (when available)
-python -m pytest tests/
+# Run system tests
+python test_startup.py
 
-# Manual testing with sample data
-python backend/demo_file_watcher.py
+# Clean start (reset databases)
+clean_start.bat  # Windows
+# ./clean_start.sh  # Linux/Mac
 ```
 
-## 📊 Performance Targets
+### Adding Custom Features
+1. **Backend**: Add new endpoints in `backend/main.py`
+2. **Frontend**: Extend UI in `frontend/index.html`
+3. **AI Features**: Enhance `backend/llm_service.py`
+4. **OCR**: Extend `backend/ocr_processor.py`
 
-- **Search Response Time**: < 500ms
-- **File Indexing Speed**: > 100 files/second
+## 📊 Performance & Specifications
+
+### Performance Targets
+- **Search Response**: < 500ms for semantic queries
+- **File Indexing**: > 100 files/second processing
+- **OCR Processing**: 1-3 seconds per image
+- **LLM Response**: 2-5 seconds per query
 - **Memory Usage**: < 512MB for 10K files
 - **Startup Time**: < 30 seconds
 
-## 🗂️ File Structure
+### Supported File Types
+- **Text Documents**: .txt, .md, .py, .js, .json, .csv, .xml, .html
+- **Research Papers**: .pdf, .doc, .docx, .tex
+- **Data Files**: .csv, .xlsx, .json, .xml, .yaml
+- **Images**: .png, .jpg, .jpeg, .gif, .bmp, .tiff (OCR processed)
+- **Code**: .py, .js, .r, .java, .cpp, .c, .h, .ipynb
 
+## 🗂️ Project Structure
 ```
 IntelligentFileManager/
 ├── backend/
 │   ├── main.py              # FastAPI application
-│   ├── database.py          # Database models
-│   ├── file_watcher.py      # File monitoring
-│   ├── organizer.py         # File organization
-│   ├── search.py            # Semantic search
-│   └── __init__.py
+│   ├── database.py          # Database models & operations
+│   ├── file_watcher.py      # File monitoring system
+│   ├── organizer.py         # File organization logic
+│   ├── search.py            # Semantic search engine
+│   ├── llm_service.py       # AI integration (Ollama)
+│   ├── ocr_processor.py     # OCR text extraction
+│   └── config.py            # Configuration management
 ├── frontend/
-│   └── index.html           # Web interface
+│   └── index.html           # Modern web interface
 ├── data/
-│   ├── projects/            # User projects
-│   └── db/                  # Databases
+│   ├── projects/            # User project directories
+│   └── db/                  # Databases (SQLite, ChromaDB)
+├── dev_todo/                # Development status reports
 ├── logs/                    # Application logs
 ├── requirements.txt         # Python dependencies
-├── setup_mvp.py            # Automated setup
-├── run_mvp.sh              # Start script
-├── CLAUDE.md               # Claude Code documentation
-├── QUICK_START.md          # Quick start guide
+├── setup_mvp.py            # Automated setup script
+├── run_mvp.sh              # Start script (Linux/Mac)
+├── run_mvp_windows.bat     # Start script (Windows)
 └── README.md               # This file
 ```
 
@@ -212,60 +302,82 @@ IntelligentFileManager/
 
 ### Common Issues
 
-**Port 8000 already in use:**
+**Installation Problems:**
 ```bash
-# Find and kill the process
-lsof -ti:8000 | xargs kill -9
+# ChromaDB compilation issues (Windows)
+pip install chromadb --no-build-isolation
+# Or use the simplified search fallback
+
+# Missing dependencies
+pip install -r requirements.txt --upgrade
 ```
 
-**Dependencies not installing:**
+**Runtime Issues:**
 ```bash
-# Upgrade pip and try again
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+# Port already in use
+lsof -ti:8000 | xargs kill -9  # Linux/Mac
+netstat -ano | findstr :8000   # Windows (find PID, then taskkill)
+
+# Database issues
+rm -rf data/db/  # Delete and recreate
+mkdir -p data/db
+
+# AI/OCR not working
+# Check if Ollama is running: ollama list
+# Check OCR installation: python -c "import easyocr"
 ```
 
-**Search not working:**
+**Performance Issues:**
 ```bash
-# Check if models downloaded
-python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+# Clear caches
+rm -rf data/db/chroma/
+rm -rf data/db/embeddings/
+
+# Reduce chunk size in .env
+CHUNK_SIZE=250
 ```
 
-**Database issues:**
-```bash
-# Reset database
-rm data/db/research.db
-python backend/main.py  # Will recreate automatically
-```
+### Getting Help
+- Check logs in `logs/app.log`
+- View API documentation at `/docs`
+- Test system status with `python test_startup.py`
+- Review configuration in `.env` file
 
 ## 🛣️ Roadmap
 
-### Current MVP Features ✅
-- [x] Project creation and management
-- [x] File monitoring and indexing  
+### Current Status: Production Ready ✅
+- [x] Complete MVP with core features
+- [x] AI-powered document summarization  
+- [x] OCR text extraction pipeline
+- [x] Modern black/white UI theme
+- [x] Real-time project management
 - [x] Semantic search with embeddings
-- [x] Automatic file organization
-- [x] Web-based interface
-- [x] Local-first operation
 
-### Upcoming Features 🚧
-- [ ] PDF content extraction
-- [ ] OCR for image documents
-- [ ] Local LLM integration (Ollama)
-- [ ] Real-time collaboration
-- [ ] Desktop app (Electron)
-- [ ] Mobile-responsive improvements
+### Next Version Features 🚧
+- [ ] Knowledge graph visualization (D3.js)
+- [ ] Desktop app packaging (Electron)
 - [ ] Advanced analytics dashboard
+- [ ] Real-time collaboration features
+- [ ] Mobile companion app
+- [ ] Advanced ML learning patterns
 
 ## 🤝 Contributing
 
 We welcome contributions! Areas where help is needed:
 
-- UI/UX improvements
-- Additional file type support
-- Performance optimizations
-- Documentation and tutorials
-- Testing and bug fixes
+- **UI/UX Enhancements**: Improved visualizations and interactions
+- **AI Features**: Enhanced LLM integration and smart suggestions
+- **Performance**: Optimization and caching improvements
+- **File Support**: Additional file type processors
+- **Documentation**: Tutorials and guides
+- **Testing**: Automated test coverage
+
+### Development Setup
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Test thoroughly
+5. Submit a pull request
 
 ## 📄 License
 
@@ -273,13 +385,15 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Built with [FastAPI](https://fastapi.tiangolo.com/) for the backend
+- Built with [FastAPI](https://fastapi.tiangolo.com/) for the backend API
 - Powered by [Sentence-Transformers](https://www.sbert.net/) for semantic search
 - Uses [ChromaDB](https://www.trychroma.com/) for vector storage
+- AI features by [Ollama](https://ollama.ai) for local LLM processing
+- OCR capabilities by [EasyOCR](https://github.com/JaidedAI/EasyOCR) for text extraction
 - Inspired by modern research workflows and academic needs
 
 ---
 
-**Happy Researching!** 🔬
+**Research File Manager MVP - Transform your research workflow with AI-powered file intelligence** 🔬
 
-For questions or support, please check the logs in `logs/app.log` or create an issue in the repository.
+*For questions, issues, or feature requests, please check the logs or create an issue in the repository.*

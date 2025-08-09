@@ -18,6 +18,28 @@ import threading
 import json
 import mimetypes
 
+# Document processing imports
+try:
+    import PyPDF2
+    PDF_AVAILABLE = True
+except ImportError:
+    PDF_AVAILABLE = False
+    
+try:
+    from docx import Document as DocxDocument
+    DOCX_AVAILABLE = True
+except ImportError:
+    DOCX_AVAILABLE = False
+
+# OCR processing imports
+try:
+    from ocr_processor import get_ocr_processor, is_ocr_available
+    OCR_AVAILABLE = True
+except ImportError:
+    OCR_AVAILABLE = False
+    get_ocr_processor = None
+    is_ocr_available = lambda: False
+
 from database import db_manager, File
 
 # Configure logging
@@ -26,10 +48,22 @@ logger = logging.getLogger(__name__)
 
 
 class FileContentExtractor:
-    """Handles content extraction from various file types."""
+    """Handles content extraction from various file types including OCR for images and scanned PDFs."""
     
     # Supported text file extensions
     TEXT_EXTENSIONS = {'.txt', '.md', '.py', '.js', '.json', '.csv', '.xml', '.html', '.css', '.sql', '.r', '.java', '.cpp', '.c', '.h'}
+    
+    # Document file extensions that support text extraction
+    DOCUMENT_EXTENSIONS = {'.pdf', '.docx', '.doc'}
+    
+    # Image file extensions that support OCR
+    IMAGE_EXTENSIONS = {'.png', '.jpg', '.jpeg', '.gif', '.bmp', '.tiff', '.tif', '.webp'}
+    
+    # Maximum file sizes for processing (in bytes)
+    MAX_PDF_SIZE = 50 * 1024 * 1024  # 50MB
+    MAX_DOCX_SIZE = 20 * 1024 * 1024  # 20MB
+    MAX_TEXT_SIZE = 10 * 1024 * 1024  # 10MB
+    MAX_IMAGE_SIZE = 50 * 1024 * 1024  # 50MB for OCR
     
     # Maximum content length to extract (5000 characters as per MVP spec)
     MAX_CONTENT_LENGTH = 5000
@@ -37,7 +71,7 @@ class FileContentExtractor:
     @classmethod
     def extract_content(cls, file_path: str) -> str:
         """
-        Extract text content from supported file types.
+        Extract text content from supported file types including PDFs, Word documents, and images (via OCR).
         
         Args:
             file_path: Path to the file
@@ -47,20 +81,39 @@ class FileContentExtractor:
         """
         try:
             file_ext = Path(file_path).suffix.lower()
+            file_size = os.path.getsize(file_path)
             
-            if file_ext not in cls.TEXT_EXTENSIONS:
+            # Handle text files
+            if file_ext in cls.TEXT_EXTENSIONS:
+                if file_size > cls.MAX_TEXT_SIZE:
+                    logger.warning(f"Text file too large for content extraction: {file_path}")
+                    return ""
+                
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+                    content = f.read(cls.MAX_CONTENT_LENGTH)
+                    logger.debug(f"Extracted {len(content)} characters from text file: {file_path}")
+                    return content
+            
+            # Handle PDF files (try regular extraction first, then OCR for scanned PDFs)
+            elif file_ext == '.pdf' and PDF_AVAILABLE:
+                content = cls._extract_pdf_content(file_path, file_size)
+                # If no text extracted from PDF, try OCR
+                if not content.strip() and OCR_AVAILABLE:
+                    logger.info(f"No text found in PDF, attempting OCR: {file_path}")
+                    content = cls._extract_ocr_content(file_path, file_size)
+                return content
+            
+            # Handle Word documents
+            elif file_ext in {'.docx', '.doc'} and DOCX_AVAILABLE:
+                return cls._extract_docx_content(file_path, file_size)
+            
+            # Handle image files with OCR
+            elif file_ext in cls.IMAGE_EXTENSIONS and OCR_AVAILABLE:
+                return cls._extract_ocr_content(file_path, file_size)
+            
+            else:
                 logger.debug(f"Unsupported file type for content extraction: {file_ext}")
                 return ""
-            
-            # Check file size - skip very large files
-            if os.path.getsize(file_path) > 10 * 1024 * 1024:  # 10MB limit
-                logger.warning(f"File too large for content extraction: {file_path}")
-                return ""
-            
-            with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-                content = f.read(cls.MAX_CONTENT_LENGTH)
-                logger.debug(f"Extracted {len(content)} characters from {file_path}")
-                return content
                 
         except (IOError, OSError, UnicodeDecodeError) as e:
             logger.warning(f"Failed to extract content from {file_path}: {e}")
@@ -87,6 +140,8 @@ class FileContentExtractor:
             # Get MIME type
             mime_type, _ = mimetypes.guess_type(file_path)
             
+            file_hash = cls._calculate_file_hash(file_path)
+            
             metadata = {
                 'size': stat_info.st_size,
                 'modified_time': stat_info.st_mtime,
@@ -95,14 +150,203 @@ class FileContentExtractor:
                 'mime_type': mime_type,
                 'is_hidden': file_path_obj.name.startswith('.'),
                 'parent_directory': str(file_path_obj.parent),
-                'file_hash': cls._calculate_file_hash(file_path)
+                'file_hash': file_hash,
+                'supports_text_extraction': file_path_obj.suffix.lower() in (cls.TEXT_EXTENSIONS | cls.DOCUMENT_EXTENSIONS),
+                'supports_ocr': file_path_obj.suffix.lower() in cls.IMAGE_EXTENSIONS or (file_path_obj.suffix.lower() == '.pdf' and OCR_AVAILABLE),
+                'processing_status': 'completed'
             }
+            
+            # Add document-specific metadata
+            if file_path_obj.suffix.lower() == '.pdf':
+                metadata['document_type'] = 'pdf'
+                metadata['pdf_processing_available'] = PDF_AVAILABLE
+            elif file_path_obj.suffix.lower() in {'.docx', '.doc'}:
+                metadata['document_type'] = 'word'
+                metadata['docx_processing_available'] = DOCX_AVAILABLE
+            elif file_path_obj.suffix.lower() in cls.IMAGE_EXTENSIONS:
+                metadata['document_type'] = 'image'
+                metadata['ocr_available'] = OCR_AVAILABLE and is_ocr_available()
             
             return metadata
             
         except (IOError, OSError) as e:
             logger.warning(f"Failed to extract metadata from {file_path}: {e}")
             return {}
+    
+    @classmethod
+    def _extract_pdf_content(cls, file_path: str, file_size: int) -> str:
+        """
+        Extract text content from PDF files using PyPDF2.
+        
+        Args:
+            file_path: Path to the PDF file
+            file_size: Size of the file in bytes
+            
+        Returns:
+            Extracted text content
+        """
+        if not PDF_AVAILABLE:
+            logger.debug(f"PyPDF2 not available for PDF extraction: {file_path}")
+            return ""
+        
+        if file_size > cls.MAX_PDF_SIZE:
+            logger.warning(f"PDF file too large for content extraction: {file_path}")
+            return ""
+        
+        try:
+            text_content = []
+            with open(file_path, 'rb') as file:
+                pdf_reader = PyPDF2.PdfReader(file)
+                
+                # Limit to first 10 pages for performance
+                max_pages = min(10, len(pdf_reader.pages))
+                
+                for page_num in range(max_pages):
+                    try:
+                        page = pdf_reader.pages[page_num]
+                        text = page.extract_text()
+                        if text.strip():
+                            text_content.append(text)
+                            
+                        # Stop if we have enough content
+                        if len(''.join(text_content)) >= cls.MAX_CONTENT_LENGTH:
+                            break
+                            
+                    except Exception as e:
+                        logger.warning(f"Failed to extract page {page_num} from PDF {file_path}: {e}")
+                        continue
+                
+                content = '\n'.join(text_content)[:cls.MAX_CONTENT_LENGTH]
+                logger.debug(f"Extracted {len(content)} characters from PDF: {file_path}")
+                return content
+                
+        except Exception as e:
+            logger.warning(f"Failed to extract PDF content from {file_path}: {e}")
+            return ""
+    
+    @classmethod
+    def _extract_docx_content(cls, file_path: str, file_size: int) -> str:
+        """
+        Extract text content from Word documents using python-docx.
+        
+        Args:
+            file_path: Path to the Word document
+            file_size: Size of the file in bytes
+            
+        Returns:
+            Extracted text content
+        """
+        if not DOCX_AVAILABLE:
+            logger.debug(f"python-docx not available for Word extraction: {file_path}")
+            return ""
+        
+        if file_size > cls.MAX_DOCX_SIZE:
+            logger.warning(f"Word document too large for content extraction: {file_path}")
+            return ""
+        
+        try:
+            # Only process .docx files (not .doc which requires different library)
+            if not file_path.lower().endswith('.docx'):
+                logger.debug(f"Only .docx files supported, skipping: {file_path}")
+                return ""
+            
+            doc = DocxDocument(file_path)
+            text_content = []
+            
+            # Extract text from paragraphs
+            for paragraph in doc.paragraphs:
+                if paragraph.text.strip():
+                    text_content.append(paragraph.text)
+                    
+                # Stop if we have enough content
+                if len('\n'.join(text_content)) >= cls.MAX_CONTENT_LENGTH:
+                    break
+            
+            # Extract text from tables
+            for table in doc.tables:
+                for row in table.rows:
+                    row_text = []
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            row_text.append(cell.text.strip())
+                    if row_text:
+                        text_content.append(' | '.join(row_text))
+                        
+                    # Stop if we have enough content
+                    if len('\n'.join(text_content)) >= cls.MAX_CONTENT_LENGTH:
+                        break
+                        
+                if len('\n'.join(text_content)) >= cls.MAX_CONTENT_LENGTH:
+                    break
+            
+            content = '\n'.join(text_content)[:cls.MAX_CONTENT_LENGTH]
+            logger.debug(f"Extracted {len(content)} characters from Word document: {file_path}")
+            return content
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract Word document content from {file_path}: {e}")
+            return ""
+    
+    @classmethod
+    def _extract_ocr_content(cls, file_path: str, file_size: int) -> str:
+        """
+        Extract text content from images or scanned PDFs using OCR.
+        
+        Args:
+            file_path: Path to the image or PDF file
+            file_size: Size of the file in bytes
+            
+        Returns:
+            Extracted text content via OCR
+        """
+        if not OCR_AVAILABLE or not is_ocr_available():
+            logger.debug(f"OCR not available for content extraction: {file_path}")
+            return ""
+        
+        file_ext = Path(file_path).suffix.lower()
+        
+        # Check size limits
+        if file_ext in cls.IMAGE_EXTENSIONS and file_size > cls.MAX_IMAGE_SIZE:
+            logger.warning(f"Image file too large for OCR: {file_path}")
+            return ""
+        elif file_ext == '.pdf' and file_size > cls.MAX_PDF_SIZE:
+            logger.warning(f"PDF file too large for OCR: {file_path}")
+            return ""
+        
+        try:
+            # Get OCR processor
+            ocr_processor = get_ocr_processor()
+            if not ocr_processor:
+                logger.warning(f"OCR processor not available: {file_path}")
+                return ""
+            
+            # Check if file can be processed
+            if not ocr_processor.can_process_file(file_path):
+                logger.debug(f"File cannot be processed with OCR: {file_path}")
+                return ""
+            
+            # Perform OCR extraction
+            logger.info(f"Starting OCR extraction for: {file_path}")
+            ocr_result = ocr_processor.extract_text(file_path)
+            
+            if ocr_result.error:
+                logger.warning(f"OCR extraction failed for {file_path}: {ocr_result.error}")
+                return ""
+            
+            if ocr_result.text:
+                # Limit content length as per other extraction methods
+                content = ocr_result.text[:cls.MAX_CONTENT_LENGTH]
+                logger.info(f"OCR extracted {len(content)} characters from {file_path} "
+                          f"(confidence: {ocr_result.confidence:.2f}, "
+                          f"processing time: {ocr_result.processing_time:.2f}s)")
+                return content
+            else:
+                logger.debug(f"No text extracted via OCR from {file_path}")
+                return ""
+                
+        except Exception as e:
+            logger.error(f"OCR extraction failed for {file_path}: {e}")
+            return ""
     
     @staticmethod
     def _calculate_file_hash(file_path: str, chunk_size: int = 8192) -> Optional[str]:
@@ -236,6 +480,21 @@ class FileHandler(FileSystemEventHandler):
             # Extract content
             content = self.content_extractor.extract_content(file_path)
             
+            # Add OCR metadata if applicable
+            if file_ext.lower() in self.content_extractor.IMAGE_EXTENSIONS or \
+               (file_ext.lower() == '.pdf' and OCR_AVAILABLE):
+                try:
+                    ocr_processor = get_ocr_processor()
+                    if ocr_processor and ocr_processor.can_process_file(file_path):
+                        ocr_status = ocr_processor.get_file_ocr_status(file_path)
+                        metadata.update({
+                            'ocr_status': ocr_status,
+                            'ocr_processed': bool(content),  # True if content was extracted
+                            'content_source': 'ocr' if file_ext.lower() in self.content_extractor.IMAGE_EXTENSIONS else 'mixed'
+                        })
+                except Exception as e:
+                    logger.warning(f"Failed to get OCR metadata for {file_path}: {e}")
+            
             # Add to database
             file_obj = db_manager.add_file(
                 project_id=self.project_id,
@@ -299,8 +558,16 @@ class FileHandler(FileSystemEventHandler):
         
         # Ignore very small files (likely empty or system files)
         try:
-            if os.path.getsize(file_path) == 0:
+            file_size = os.path.getsize(file_path)
+            if file_size == 0:
                 return True
+            
+            # Also ignore extremely large files that would be impractical to process
+            max_size = 500 * 1024 * 1024  # 500MB limit
+            if file_size > max_size:
+                logger.info(f"Ignoring very large file ({file_size / (1024*1024):.1f}MB): {file_path}")
+                return True
+                
         except OSError:
             return True
         
